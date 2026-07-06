@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>設定 · CO2削減サポート</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <div class="page-head">
+      <div class="eyebrow" id="eyebrow"></div>
+      <h1 class="page-title">設定</h1>
+      <p class="page-sub">組織情報とブランディングを設定します。ロゴやベンチマーク画像はこちらからアップロードしてください。</p>
+    </div>
+
+    <section class="card card-pad">
+      <div class="card-title" id="aiTitle"></div>
+      <div id="aiStatus"></div>
+    </section>
+
+    <section class="card card-pad">
+      <div class="card-title">組織情報</div>
+      <label class="field"><span>組織名 <small>ヘッダーに表示されます</small></span><input type="text" id="company"></label>
+      <label class="field"><span>診断レポート注記 <small>任意</small></span><textarea id="note" placeholder="例）本試算は提案用の参考値です。"></textarea></label>
+      <button class="btn btn-primary" id="saveInfo">保存</button>
+      <span id="infoMsg" class="item-meta" style="margin-left:12px"></span>
+    </section>
+
+    <section class="card card-pad">
+      <div class="card-title" id="brandTitle"></div>
+      <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap">
+        <div class="logo-box" id="logoPreview" style="width:64px; height:64px; border-width:2px"></div>
+        <div>
+          <input type="file" id="logoInput" accept="image/*" class="hidden">
+          <button class="btn" id="logoBtn"></button>
+          <div class="item-meta" style="margin-top:6px">PNG · JPG · WEBP · SVG（最大数MB）</div>
+        </div>
+      </div>
+      <div id="logoMsg" class="item-meta" style="margin-top:10px"></div>
+    </section>
+
+    <!-- ユーザー管理（owner/adminのみ） -->
+    <section class="card card-pad hidden" id="usersSection">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px">
+        <div class="card-title" id="usersTitle" style="margin:0"></div>
+        <button class="btn btn-primary btn-sm" id="addUserBtn"></button>
+      </div>
+      <div class="table-scroll">
+        <table class="ptable" id="usersTable">
+          <thead><tr><th>名前</th><th>メール</th><th>権限</th><th>状態</th><th>最終ログイン</th><th></th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 監査ログ（owner/adminのみ） -->
+    <section class="card card-pad hidden" id="auditSection">
+      <div class="card-title" id="auditTitle"></div>
+      <div class="table-scroll">
+        <table class="ptable" id="auditTable">
+          <thead><tr><th>日時</th><th>操作</th><th>詳細</th><th>ユーザー</th></tr></thead>
+          <tbody id="auditBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="foot-note" id="footNote"></div>
+  </main>
+
+  <!-- ユーザー追加モーダル -->
+  <div class="modal-overlay" id="userModal">
+    <div class="modal">
+      <div class="modal-head"><h3>ユーザーを追加</h3><button class="btn-ghost" id="closeUserModal"></button></div>
+      <div class="modal-body">
+        <label class="field"><span>お名前</span><input type="text" id="nu_name" placeholder="山田 太郎"></label>
+        <label class="field"><span>メールアドレス</span><input type="email" id="nu_email" placeholder="member@company.co.jp"></label>
+        <label class="field"><span>初期パスワード <small>8文字以上</small></span><input type="text" id="nu_password" placeholder="8文字以上"></label>
+        <label class="field"><span>権限</span>
+          <select id="nu_role">
+            <option value="member">メンバー（診断・製品編集）</option>
+            <option value="admin">管理者（ユーザー管理も可）</option>
+          </select>
+        </label>
+        <div class="auth-msg" id="userModalMsg"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="cancelUserBtn">キャンセル</button>
+        <button class="btn btn-primary" id="saveUserBtn">追加</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/settings.js"></script>
+</body>
+</html>
