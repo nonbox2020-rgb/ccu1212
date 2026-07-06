@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ログイン · CO2削減サポート</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="login-brand">
+        <span class="logo-box" id="logoBox"></span>
+        <h1>CO<sub style="font-size:.7em">2</sub>削減サポート</h1>
+        <p>Construction Material Carbon Advisor</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" type="button">ログイン</button>
+        <button class="auth-tab" id="tabSignup" type="button">新規登録</button>
+      </div>
+
+      <div class="card card-pad auth-panel">
+        <!-- ログイン -->
+        <div id="loginForm">
+          <label class="field"><span>メールアドレス</span>
+            <input type="email" id="li_email" autocomplete="username" placeholder="you@company.co.jp"></label>
+          <label class="field"><span>パスワード</span>
+            <input type="password" id="li_password" autocomplete="current-password" placeholder="••••••••"></label>
+          <button class="btn btn-primary auth-submit" id="loginBtn" type="button">ログイン</button>
+          <div class="auth-msg" id="loginMsg"></div>
+        </div>
+
+        <!-- 新規登録 -->
+        <div id="signupForm" class="hidden">
+          <label class="field"><span>会社名 <small>組織名</small></span>
+            <input type="text" id="su_org" placeholder="株式会社〇〇建設"></label>
+          <label class="field"><span>お名前 <small>担当者名</small></span>
+            <input type="text" id="su_name" placeholder="山田 太郎"></label>
+          <label class="field"><span>メールアドレス</span>
+            <input type="email" id="su_email" autocomplete="username" placeholder="you@company.co.jp"></label>
+          <label class="field"><span>パスワード <small>8文字以上</small></span>
+            <input type="password" id="su_password" autocomplete="new-password" placeholder="••••••••"></label>
+          <button class="btn btn-primary auth-submit" id="signupBtn" type="button">アカウントを作成</button>
+          <div class="auth-msg" id="signupMsg"></div>
+          <p class="auth-note">登録すると管理者（オーナー）アカウントが作成され、サンプル製品が初期登録されます。</p>
+        </div>
+      </div>
+
+      <div class="secure-line" id="secureLine"></div>
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script>
+    document.getElementById("logoBox").innerHTML = icon("leaf", 22);
+    document.getElementById("secureLine").innerHTML = icon("lock", 12) + " 暗号化通信 · 会社ごとにデータを分離管理";
+
+    const tabLogin = document.getElementById("tabLogin");
+    const tabSignup = document.getElementById("tabSignup");
+    const loginForm = document.getElementById("loginForm");
+    const signupForm = document.getElementById("signupForm");
+
+    function showTab(which) {
+      const isLogin = which === "login";
+      tabLogin.classList.toggle("active", isLogin);
+      tabSignup.classList.toggle("active", !isLogin);
+      loginForm.classList.toggle("hidden", !isLogin);
+      signupForm.classList.toggle("hidden", isLogin);
+    }
+    tabLogin.addEventListener("click", () => showTab("login"));
+    tabSignup.addEventListener("click", () => showTab("signup"));
+
+    async function doLogin() {
+      const msg = document.getElementById("loginMsg");
+      const btn = document.getElementById("loginBtn");
+      msg.textContent = ""; msg.className = "auth-msg";
+      const email = document.getElementById("li_email").value.trim();
+      const password = document.getElementById("li_password").value;
+      if (!email || !password) { msg.textContent = "メールアドレスとパスワードを入力してください。"; msg.classList.add("err"); return; }
+      btn.disabled = true; btn.textContent = "ログイン中…";
+      try {
+        const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+        const data = await res.json();
+        if (res.ok && data.ok) { window.location.href = "/"; }
+        else { msg.textContent = data.error || "ログインに失敗しました。"; msg.classList.add("err"); btn.disabled = false; btn.textContent = "ログイン"; }
+      } catch (e) { msg.textContent = "通信エラーが発生しました。"; msg.classList.add("err"); btn.disabled = false; btn.textContent = "ログイン"; }
+    }
+
+    async function doSignup() {
+      const msg = document.getElementById("signupMsg");
+      const btn = document.getElementById("signupBtn");
+      msg.textContent = ""; msg.className = "auth-msg";
+      const orgName = document.getElementById("su_org").value.trim();
+      const userName = document.getElementById("su_name").value.trim();
+      const email = document.getElementById("su_email").value.trim();
+      const password = document.getElementById("su_password").value;
+      if (!orgName) { msg.textContent = "会社名を入力してください。"; msg.classList.add("err"); return; }
+      if (!email) { msg.textContent = "メールアドレスを入力してください。"; msg.classList.add("err"); return; }
+      if (password.length < 8) { msg.textContent = "パスワードは8文字以上で設定してください。"; msg.classList.add("err"); return; }
+      btn.disabled = true; btn.textContent = "作成中…";
+      try {
+        const res = await fetch("/api/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orgName, userName, email, password }) });
+        const data = await res.json();
+        if (res.ok && data.ok) { window.location.href = "/"; }
+        else { msg.textContent = data.error || "登録に失敗しました。"; msg.classList.add("err"); btn.disabled = false; btn.textContent = "アカウントを作成"; }
+      } catch (e) { msg.textContent = "通信エラーが発生しました。"; msg.classList.add("err"); btn.disabled = false; btn.textContent = "アカウントを作成"; }
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", doLogin);
+    document.getElementById("signupBtn").addEventListener("click", doSignup);
+    document.getElementById("li_password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+    document.getElementById("su_password").addEventListener("keydown", (e) => { if (e.key === "Enter") doSignup(); });
+
+    // 既ログインならトップへ。新規登録が無効なら登録タブを隠す
+    fetch("/api/session").then(r => r.json()).then(s => {
+      if (s.authed) { window.location.href = "/"; return; }
+      if (s.allowSignup === false) { tabSignup.style.display = "none"; }
+    }).catch(()=>{});
+  </script>
+</body>
+</html>
