@@ -19,15 +19,16 @@ const PROGRESS_STEPS = [
     icon("info", 13) +
     "<span>単価・CO\u2082排出係数は製品DBの登録値に基づきます。実運用では検証済みの排出係数を登録してください。診断結果は提案用の試算です。</span>";
 
-  // AI readiness banner
+  // AI readiness banner（運営者にのみ表示。一般ユーザーはキー設定不可のため）
   try {
+    const sess = await getSession();
     const s = await api("/api/settings");
-    if (!s.ai_ready) {
+    if (!s.ai_ready && sess.isPlatformAdmin) {
       document.getElementById("aiWarn").innerHTML =
         `<div class="card card-pad" style="margin-bottom:20px"><div class="notice warn">${icon(
           "warn",
           16
-        )}<span>AI APIキー（<code>ANTHROPIC_API_KEY</code>）が未設定です。診断を実行するには、Renderの環境変数、または設定画面で登録してください。</span></div></div>`;
+        )}<span>AI APIキー（<code>ANTHROPIC_API_KEY</code>）が未設定です。診断を実行するには、Renderの環境変数に登録してください。</span></div></div>`;
     }
   } catch (e) {}
 
