@@ -1,73 +1,140 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>製品DB · CO2削減サポート</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css">
-</head>
-<body>
-  <main class="wrap">
-    <div class="page-head" style="display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap">
-      <div>
-        <div class="eyebrow" id="eyebrow"></div>
-        <h1 class="page-title">製品データベース</h1>
-        <p class="page-sub">診断で照合する自社製品を登録します。単価・CO<sub>2</sub>排出係数・照合キーワードを正確に設定してください。</p>
-      </div>
-      <div style="display:flex; gap:10px; flex-wrap:wrap">
-        <button class="btn" id="seedBtn"></button>
-        <button class="btn btn-primary" id="addBtn"></button>
-      </div>
-    </div>
+/* global renderTopbar, icon, api, yen, esc */
+"use strict";
 
-    <div class="card">
-      <div class="table-scroll">
-        <table class="ptable" id="ptable">
-          <thead><tr>
-            <th>製品名</th><th>区分</th><th class="num">単価</th><th>単位</th>
-            <th class="num">CO₂/単位</th><th class="num">基準CO₂</th><th>算定根拠</th><th></th>
-          </tr></thead>
-          <tbody id="ptbody"></tbody>
-        </table>
-      </div>
-      <div id="emptyState"></div>
-    </div>
+(async function init() {
+  await renderTopbar("products");
+  document.getElementById("eyebrow").innerHTML = icon("box", 12) + " PRODUCT CATALOG";
+  document.getElementById("addBtn").innerHTML = icon("plus", 15) + " 製品を追加";
+  document.getElementById("seedBtn").innerHTML = icon("box", 15) + " サンプル建材を一括投入";
+  document.getElementById("closeModal").innerHTML = icon("x", 16);
+  document.getElementById("footNote").innerHTML =
+    icon("info", 13) +
+    "<span>「基準CO\u2082」は置き換え前の既存資材の排出係数です。この値と自社製品の排出係数の差が削減量として計算されます。</span>";
 
-    <div class="foot-note" id="footNote"></div>
-  </main>
+  document.getElementById("addBtn").addEventListener("click", () => openModal());
+  document.getElementById("seedBtn").addEventListener("click", seedSamples);
+  document.getElementById("closeModal").addEventListener("click", closeModal);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("saveBtn").addEventListener("click", save);
+  document.getElementById("modal").addEventListener("click", (e) => {
+    if (e.target.id === "modal") closeModal();
+  });
 
-  <!-- modal -->
-  <div class="modal-overlay" id="modal">
-    <div class="modal">
-      <div class="modal-head"><h3 id="modalTitle">製品を追加</h3><button class="btn-ghost" id="closeModal"></button></div>
-      <div class="modal-body">
-        <input type="hidden" id="f_id">
-        <label class="field"><span>製品名 <small>必須</small></span><input type="text" id="f_name" placeholder="CR LIMEX フローリング"></label>
-        <div class="grid2">
-          <label class="field"><span>区分</span><input type="text" id="f_category" placeholder="床材"></label>
-          <label class="field"><span>単位</span><input type="text" id="f_unit" placeholder="m2"></label>
-        </div>
-        <div class="grid2">
-          <label class="field"><span>単価（円）</span><input type="number" class="num-input" id="f_price" placeholder="7800"></label>
-          <label class="field"><span>CO₂排出係数（kg/単位）</span><input type="number" step="0.01" class="num-input" id="f_co2" placeholder="2.3"></label>
-        </div>
-        <label class="field"><span>基準CO₂（置換される既存資材のkg/単位）<small>削減量の計算に使用</small></span><input type="number" step="0.01" class="num-input" id="f_baseline" placeholder="8.0"></label>
-        <label class="field"><span>照合キーワード <small>カンマ区切り。見積書の品名に含まれると照合されます</small></span><input type="text" id="f_keywords" placeholder="フローリング,複合フローリング,床材"></label>
-        <label class="field"><span>CO₂算定根拠 <small>LCA算定方法・検証機関・算定年など</small></span><input type="text" id="f_source" placeholder="例）第三者検証済みEPD（2025年取得）"></label>
-        <label class="field checkbox-field"><input type="checkbox" id="f_verified"><span>第三者検証済みデータ（診断結果に「検証済」と表示されます）</span></label>
-        <label class="field"><span>説明</span><textarea id="f_desc" placeholder="製品の特徴・用途"></textarea></label>
-      </div>
-      <div class="modal-foot">
-        <button class="btn" id="cancelBtn">キャンセル</button>
-        <button class="btn btn-primary" id="saveBtn">保存</button>
-      </div>
-    </div>
-  </div>
+  await load();
+})();
 
-  <script src="/js/common.js"></script>
-  <script src="/js/products.js"></script>
-</body>
-</html>
+let products = [];
+
+async function load() {
+  const data = await api("/api/products");
+  products = data.products;
+  render();
+}
+
+function render() {
+  const tb = document.getElementById("ptbody");
+  const empty = document.getElementById("emptyState");
+  if (!products.length) {
+    tb.innerHTML = "";
+    empty.innerHTML = `<div class="empty">${icon("box", 34)}<div>製品が登録されていません。「製品を追加」から登録してください。</div></div>`;
+    return;
+  }
+  empty.innerHTML = "";
+  tb.innerHTML = products
+    .map(
+      (p) => `<tr>
+        <td><span class="item-name">${esc(p.name)}</span>${p.active ? "" : ' <span class="badge off">無効</span>'}
+          ${p.description ? `<div class="item-meta" style="max-width:280px; white-space:normal">${esc(p.description)}</div>` : ""}</td>
+        <td>${p.category ? `<span class="badge">${esc(p.category)}</span>` : "—"}</td>
+        <td class="num">${yen(p.unit_price)}</td>
+        <td class="item-meta">${esc(p.unit)}</td>
+        <td class="num">${Number(p.co2_per_unit).toFixed(2)}</td>
+        <td class="num">${Number(p.baseline_co2_per_unit).toFixed(2)}</td>
+        <td style="max-width:200px; white-space:normal">
+          ${p.verified ? `<span class="badge verified">${icon("badge", 11)} 検証済</span> ` : ""}
+          <span class="item-meta">${esc(p.data_source || "未設定")}</span>
+        </td>
+        <td><div class="row-actions">
+          <button class="btn btn-sm btn-ghost" data-edit="${p.id}">${icon("edit", 14)}</button>
+          <button class="btn btn-sm btn-danger" data-del="${p.id}">${icon("trash", 14)}</button>
+        </div></td>
+      </tr>`
+    )
+    .join("");
+  tb.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => openModal(products.find((x) => x.id == b.dataset.edit)))
+  );
+  tb.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => del(b.dataset.del)));
+}
+
+function openModal(p) {
+  document.getElementById("modalTitle").textContent = p ? "製品を編集" : "製品を追加";
+  document.getElementById("f_id").value = p ? p.id : "";
+  document.getElementById("f_name").value = p ? p.name : "";
+  document.getElementById("f_category").value = p ? p.category : "";
+  document.getElementById("f_unit").value = p ? p.unit : "m2";
+  document.getElementById("f_price").value = p ? p.unit_price : "";
+  document.getElementById("f_co2").value = p ? p.co2_per_unit : "";
+  document.getElementById("f_baseline").value = p ? p.baseline_co2_per_unit : "";
+  document.getElementById("f_keywords").value = p ? p.keywords : "";
+  document.getElementById("f_source").value = p ? (p.data_source || "") : "";
+  document.getElementById("f_verified").checked = p ? !!p.verified : false;
+  document.getElementById("f_desc").value = p ? p.description : "";
+  document.getElementById("modal").classList.add("show");
+}
+function closeModal() {
+  document.getElementById("modal").classList.remove("show");
+}
+
+async function save() {
+  const id = document.getElementById("f_id").value;
+  const body = {
+    name: document.getElementById("f_name").value,
+    category: document.getElementById("f_category").value,
+    unit: document.getElementById("f_unit").value,
+    unit_price: document.getElementById("f_price").value,
+    co2_per_unit: document.getElementById("f_co2").value,
+    baseline_co2_per_unit: document.getElementById("f_baseline").value,
+    keywords: document.getElementById("f_keywords").value,
+    data_source: document.getElementById("f_source").value,
+    verified: document.getElementById("f_verified").checked,
+    description: document.getElementById("f_desc").value,
+  };
+  if (!body.name.trim()) {
+    alert("製品名は必須です。");
+    return;
+  }
+  try {
+    if (id) await api(`/api/products/${id}`, { method: "PUT", body: JSON.stringify(body) });
+    else await api("/api/products", { method: "POST", body: JSON.stringify(body) });
+    closeModal();
+    await load();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function del(id) {
+  const p = products.find((x) => x.id == id);
+  if (!confirm(`「${p ? p.name : ""}」を削除しますか？`)) return;
+  await api(`/api/products/${id}`, { method: "DELETE" });
+  await load();
+}
+
+async function seedSamples() {
+  if (!confirm("新築工事の見積書にマッチするサンプル建材（5件）を一括登録します。\n※ CO2係数・単価は提案が出るように置いた仮の値です。実運用では検証済みの数値に差し替えてください。\n\n登録しますか？")) return;
+  const btn = document.getElementById("seedBtn");
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.textContent = "投入中…";
+  try {
+    const res = await api("/api/products/seed-samples", { method: "POST" });
+    await load();
+    alert(`${res.added}件を追加しました。${res.skipped ? `（${res.skipped}件は登録済みのためスキップ）` : ""}`);
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
