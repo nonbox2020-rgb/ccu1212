@@ -257,6 +257,26 @@ async function countOwners(orgId) {
 
 /* ------------------------------ 製品（org単位） ------------------------------ */
 
+// プラットフォーム運営者（PLATFORM_ADMIN_EMAIL）の org_id を取得。
+// この org の製品カタログを全ユーザー共通のカタログとして配信する。
+async function getPlatformOrgId() {
+  const email = (process.env.PLATFORM_ADMIN_EMAIL || "").toLowerCase().trim();
+  if (!email) return null;
+  const { rows } = await pool.query(
+    "SELECT org_id FROM users WHERE email = $1 ORDER BY created_at ASC LIMIT 1",
+    [email]
+  );
+  return rows.length ? rows[0].org_id : null;
+}
+
+// 全ユーザーに見せる共通カタログ（運営者orgの有効な製品）。
+// 運営者が未設定・未登録の場合は空配列を返す。
+async function listPlatformCatalog(includeInactive = false) {
+  const orgId = await getPlatformOrgId();
+  if (!orgId) return [];
+  return listProducts(orgId, includeInactive);
+}
+
 async function listProducts(orgId, includeInactive = true) {
   const where = includeInactive ? "" : "AND active = true";
   const { rows } = await pool.query(`SELECT * FROM products WHERE org_id = $1 ${where} ORDER BY category, name`, [orgId]);
@@ -385,6 +405,8 @@ module.exports = {
   createUser,
   updateUserActive,
   countOwners,
+  getPlatformOrgId,
+  listPlatformCatalog,
   listProducts,
   getProduct,
   createProduct,
