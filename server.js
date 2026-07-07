@@ -123,6 +123,19 @@ function requireRole(...roles) {
   };
 }
 
+// プラットフォーム運営者（PLATFORM_ADMIN_EMAIL と一致するユーザー）だけを通す。
+// 製品カタログ・設定の編集はこの運営者のみに許可する。
+function isPlatformAdmin(user) {
+  const email = (process.env.PLATFORM_ADMIN_EMAIL || "").toLowerCase().trim();
+  return !!email && !!user && user.email.toLowerCase() === email;
+}
+
+function requirePlatformAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "認証が必要です。" });
+  if (!isPlatformAdmin(req.user)) return res.status(403).json({ error: "この操作は運営者のみ実行できます。" });
+  next();
+}
+
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 /* ----------------------------- バリデーション補助 ----------------------------- */
@@ -139,6 +152,7 @@ app.get("/api/session", (req, res) => {
       authed: true,
       user: { id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role },
       org: { id: req.user.org_id, name: req.user.org_name },
+      isPlatformAdmin: isPlatformAdmin(req.user),
     });
   }
   res.json({ authed: false, allowSignup: ALLOW_SIGNUP });
@@ -218,15 +232,19 @@ app.post("/api/logout", (req, res) => {
 });
 
 /* ----------------------------- 静的ファイル ----------------------------- */
-// 公開ページ（login/signup）とアセットは認証不要
-app.use(
-  express.static(path.join(__dirname, "public"), {
-    index: false,
-    setHeaders: (res, p) => {
-      if (p.endsWith(".html")) res.setHeader("Cache-Control", "no-store");
-    },
-  })
-);
+// 製品DB・設定のHTMLは静的配信させず、後段のガード付きルートで扱う
+const GUARDED_HTML = new Set(["/products.html", "/settings.html"]);
+const staticMw = express.static(path.join(__dirname, "public"), {
+  index: false,
+  setHeaders: (res, p) => {
+    if (p.endsWith(".html")) res.setHeader("Cache-Control", "no-store");
+  },
+});
+// 公開ページ（login/signup）とアセットは認証不要。ただし保護HTMLは静的配信をスキップ。
+app.use((req, res, next) => {
+  if (GUARDED_HTML.has(req.path)) return next();
+  return staticMw(req, res, next);
+});
 
 /* ----------------------------- ヘルスチェック ----------------------------- */
 app.get("/healthz", wrap(async (req, res) => {
@@ -241,21 +259,36 @@ app.get("/healthz", wrap(async (req, res) => {
 /* ----------------------------- 認証必須ページ ----------------------------- */
 const page = (name) => (req, res) => res.sendFile(path.join(__dirname, "public", name));
 app.get("/", requireAuth, page("index.html"));
-app.get("/products.html", requireAuth, page("products.html"));
-app.get("/settings.html", requireAuth, page("settings.html"));
+
+// 製品DB・設定は運営者(プラットフォーム管理者)のみ。一般ユーザーはトップへ。
+function platformAdminPage(name) {
+  return (req, res) => {
+    if (!isPlatformAdmin(req.user)) return res.redirect("/");
+    res.sendFile(path.join(__dirname, "public", name));
+  };
+}
+app.get("/products.html", requireAuth, platformAdminPage("products.html"));
+app.get("/settings.html", requireAuth, platformAdminPage("settings.html"));
 
 // 以降の /api は認証必須＋汎用レート制限
 app.use("/api", apiLimiter, requireAuth);
 
 /* ============================================================
-   製品API（org単位）
+   製品API
+   - 一覧(GET): 全ユーザーが「運営者の共通カタログ」を閲覧
+   - 作成/更新/削除: 運営者(プラットフォーム管理者)のみ
    ============================================================ */
 
 app.get("/api/products", wrap(async (req, res) => {
-  res.json({ products: await db.listProducts(req.user.org_id) });
+  // 運営者は自分のカタログをそのまま管理。一般ユーザーは運営者の共通カタログ(有効な製品のみ)を閲覧。
+  if (isPlatformAdmin(req.user)) {
+    return res.json({ products: await db.listProducts(req.user.org_id), canEdit: true });
+  }
+  const catalog = await db.listPlatformCatalog(false);
+  res.json({ products: catalog, canEdit: false });
 }));
 
-app.post("/api/products", wrap(async (req, res) => {
+app.post("/api/products", requirePlatformAdmin, wrap(async (req, res) => {
   const b = req.body || {};
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: "製品名は必須です。" });
   const p = await db.createProduct(req.user.org_id, b);
@@ -263,7 +296,7 @@ app.post("/api/products", wrap(async (req, res) => {
   res.json({ product: p });
 }));
 
-app.put("/api/products/:id", wrap(async (req, res) => {
+app.put("/api/products/:id", requirePlatformAdmin, wrap(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "不正なIDです。" });
   const p = await db.updateProduct(req.user.org_id, id, req.body || {});
@@ -272,7 +305,7 @@ app.put("/api/products/:id", wrap(async (req, res) => {
   res.json({ product: p });
 }));
 
-app.delete("/api/products/:id", wrap(async (req, res) => {
+app.delete("/api/products/:id", requirePlatformAdmin, wrap(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: "不正なIDです。" });
   await db.deleteProduct(req.user.org_id, id);
@@ -281,22 +314,38 @@ app.delete("/api/products/:id", wrap(async (req, res) => {
 }));
 
 /* ============================================================
-   設定API（org単位）
+   設定API
+   - GET: 運営者は自組織の設定。一般ユーザーには運営者のブランディング(会社名・ロゴ)を配信
+   - PUT/ロゴ: 運営者のみ
    ============================================================ */
 
 app.get("/api/settings", wrap(async (req, res) => {
-  const s = await db.allSettings(req.user.org_id);
-  res.json({
-    settings: {
-      company_name: s.company_name || req.user.org_name || "",
+  if (isPlatformAdmin(req.user)) {
+    const s = await db.allSettings(req.user.org_id);
+    return res.json({
+      settings: {
+        company_name: s.company_name || req.user.org_name || "",
+        report_note: s.report_note || "",
+        logo_data_url: s.logo_data_url || "",
+      },
+      ai_ready: ai.hasKey(),
+    });
+  }
+  // 一般ユーザー: 運営者orgのブランディングを配信（ヘッダーのロゴ・名称に使用）
+  const platformOrgId = await db.getPlatformOrgId();
+  let brand = { company_name: "", report_note: "", logo_data_url: "" };
+  if (platformOrgId) {
+    const s = await db.allSettings(platformOrgId);
+    brand = {
+      company_name: s.company_name || "",
       report_note: s.report_note || "",
       logo_data_url: s.logo_data_url || "",
-    },
-    ai_ready: ai.hasKey(),
-  });
+    };
+  }
+  res.json({ settings: brand, ai_ready: ai.hasKey() });
 }));
 
-app.put("/api/settings", wrap(async (req, res) => {
+app.put("/api/settings", requirePlatformAdmin, wrap(async (req, res) => {
   const { company_name, report_note } = req.body || {};
   if (company_name !== undefined) await db.setSetting(req.user.org_id, "company_name", String(company_name).slice(0, 200));
   if (report_note !== undefined) await db.setSetting(req.user.org_id, "report_note", String(report_note).slice(0, 1000));
@@ -355,7 +404,7 @@ app.get("/api/audit", requireRole("owner", "admin"), wrap(async (req, res) => {
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_MB * 1024 * 1024 } });
 const logoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_LOGO_MB * 1024 * 1024 } });
 
-app.post("/api/settings/logo", logoUpload.single("logo"), wrap(async (req, res) => {
+app.post("/api/settings/logo", requirePlatformAdmin, logoUpload.single("logo"), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "ファイルがありません。" });
   const ext = (path.extname(req.file.originalname) || "").toLowerCase();
   const mimeMap = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml" };
@@ -382,7 +431,10 @@ app.post("/api/analyze", analyzeLimiter, memUpload.single("estimate"), wrap(asyn
     return res.status(502).json({ error: "見積書の読み取りに失敗しました。ファイル形式をご確認ください。", detail: String(e.message).slice(0, 200) });
   }
 
-  const products = await db.listProducts(req.user.org_id);
+  // 診断は運営者の共通カタログと照合（運営者自身は自組織カタログ＝同じ内容）
+  const products = isPlatformAdmin(req.user)
+    ? await db.listProducts(req.user.org_id)
+    : await db.listPlatformCatalog(false);
   const { rows, totals } = analyze(items, products);
   const matched = rows.filter((r) => r.matched);
 
