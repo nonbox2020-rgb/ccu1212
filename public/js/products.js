@@ -5,12 +5,14 @@
   await renderTopbar("products");
   document.getElementById("eyebrow").innerHTML = icon("box", 12) + " PRODUCT CATALOG";
   document.getElementById("addBtn").innerHTML = icon("plus", 15) + " 製品を追加";
+  document.getElementById("seedBtn").innerHTML = icon("box", 15) + " サンプル建材を一括投入";
   document.getElementById("closeModal").innerHTML = icon("x", 16);
   document.getElementById("footNote").innerHTML =
     icon("info", 13) +
     "<span>「基準CO\u2082」は置き換え前の既存資材の排出係数です。この値と自社製品の排出係数の差が削減量として計算されます。</span>";
 
   document.getElementById("addBtn").addEventListener("click", () => openModal());
+  document.getElementById("seedBtn").addEventListener("click", seedSamples);
   document.getElementById("closeModal").addEventListener("click", closeModal);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("saveBtn").addEventListener("click", save);
@@ -117,4 +119,22 @@ async function del(id) {
   if (!confirm(`「${p ? p.name : ""}」を削除しますか？`)) return;
   await api(`/api/products/${id}`, { method: "DELETE" });
   await load();
+}
+
+async function seedSamples() {
+  if (!confirm("新築工事の見積書にマッチするサンプル建材（5件）を一括登録します。\n※ CO2係数・単価は提案が出るように置いた仮の値です。実運用では検証済みの数値に差し替えてください。\n\n登録しますか？")) return;
+  const btn = document.getElementById("seedBtn");
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.textContent = "投入中…";
+  try {
+    const res = await api("/api/products/seed-samples", { method: "POST" });
+    await load();
+    alert(`${res.added}件を追加しました。${res.skipped ? `（${res.skipped}件は登録済みのためスキップ）` : ""}`);
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
 }
