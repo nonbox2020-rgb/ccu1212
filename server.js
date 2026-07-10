@@ -12,6 +12,7 @@ const db = require("./db");
 const { extractForAI } = require("./lib/extract");
 const { analyze } = require("./lib/match");
 const ai = require("./lib/ai");
+const mailer = require("./lib/mailer");
 
 const PORT = process.env.PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || require("crypto").randomBytes(32).toString("hex");
@@ -178,7 +179,66 @@ app.post(
     const { org, user } = await db.createOrganizationWithOwner({ orgName, email, password, userName });
     await db.audit(org.id, user, "org.signup", `会社「${org.name}」を新規登録`, clientIp(req));
 
-    req.session.userId = user.id;
+    // メール確認コードを発行・送信（本登録前）
+    try {
+      const code = await db.issueAuthCode(user.id, "verify_email");
+      await mailer.sendVerificationCode(user.email, code);
+    } catch (e) {
+      console.error("[signup] 確認コード送信に失敗:", e.message);
+    }
+
+    // ログインはさせず、確認コード入力へ誘導
+    res.json({ ok: true, needVerify: true, email: user.email });
+  })
+);
+
+// メール確認コードの検証（本登録完了）
+app.post(
+  "/api/verify-email",
+  authLimiter,
+  wrap(async (req, res) => {
+    const { email, code } = req.body || {};
+    if (!isEmail(email) || !code) return res.status(400).json({ error: "メールアドレスと確認コードを入力してください。" });
+    const user = await db.findAnyUserByEmail(email);
+    if (!user) return res.status(400).json({ error: "確認コードが正しくないか、有効期限が切れています。" });
+    if (user.email_verified) return res.json({ ok: true, alreadyVerified: true });
+
+    const result = await db.verifyAuthCode(user.id, "verify_email", code);
+    if (!result.ok) {
+      const msg = result.reason === "too_many_attempts"
+        ? "試行回数が上限に達しました。コードを再送してください。"
+        : "確認コードが正しくないか、有効期限が切れています。";
+      return res.status(400).json({ error: msg });
+    }
+    await db.markEmailVerified(user.id);
+    await db.audit(user.org_id, user, "email.verified", "メールアドレスを確認", clientIp(req));
+
+    // 確認完了と同時にログイン状態にする
+    req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: "セッションの作成に失敗しました。" });
+      req.session.userId = user.id;
+      res.json({ ok: true });
+    });
+  })
+);
+
+// 確認コードの再送
+app.post(
+  "/api/resend-code",
+  authLimiter,
+  wrap(async (req, res) => {
+    const { email } = req.body || {};
+    if (!isEmail(email)) return res.status(400).json({ error: "メールアドレスを入力してください。" });
+    const user = await db.findAnyUserByEmail(email);
+    // アカウントの有無を漏らさない：存在してもしなくても同じ応答
+    if (user && !user.email_verified) {
+      try {
+        const code = await db.issueAuthCode(user.id, "verify_email");
+        await mailer.sendVerificationCode(user.email, code);
+      } catch (e) {
+        console.error("[resend] 送信失敗:", e.message);
+      }
+    }
     res.json({ ok: true });
   })
 );
@@ -210,6 +270,17 @@ app.post(
       return res.status(401).json({ error: "メールアドレスまたはパスワードが正しくありません。" });
     }
 
+    // メール未確認ならログインを止め、確認フローへ誘導
+    if (matched.email_verified === false) {
+      try {
+        const code = await db.issueAuthCode(matched.id, "verify_email");
+        await mailer.sendVerificationCode(matched.email, code);
+      } catch (e) {
+        console.error("[login] 確認コード送信失敗:", e.message);
+      }
+      return res.status(403).json({ error: "メールアドレスの確認が完了していません。確認コードを送信しました。", needVerify: true, email: matched.email });
+    }
+
     await db.touchLastLogin(matched.id);
     await db.audit(matched.org_id, matched, "login", "ログイン成功", clientIp(req));
 
@@ -230,6 +301,55 @@ app.post("/api/logout", (req, res) => {
     res.json({ ok: true });
   });
 });
+
+// パスワード再設定：コード送信
+app.post(
+  "/api/forgot-password",
+  authLimiter,
+  wrap(async (req, res) => {
+    const { email } = req.body || {};
+    if (!isEmail(email)) return res.status(400).json({ error: "有効なメールアドレスを入力してください。" });
+    const user = await db.findAnyUserByEmail(email);
+    // アカウントの存在を漏らさない：常に同じ成功応答
+    if (user) {
+      try {
+        const code = await db.issueAuthCode(user.id, "password_reset");
+        await mailer.sendPasswordResetCode(user.email, code);
+        await db.audit(user.org_id, user, "password.reset_request", "パスワード再設定コードを送信", clientIp(req));
+      } catch (e) {
+        console.error("[forgot] 送信失敗:", e.message);
+      }
+    }
+    res.json({ ok: true });
+  })
+);
+
+// パスワード再設定：コード＋新パスワードで確定
+app.post(
+  "/api/reset-password",
+  authLimiter,
+  wrap(async (req, res) => {
+    const { email, code, password } = req.body || {};
+    if (!isEmail(email) || !code) return res.status(400).json({ error: "メールアドレスとコードを入力してください。" });
+    if (!strongEnough(password)) return res.status(400).json({ error: "新しいパスワードは8文字以上で設定してください。" });
+
+    const user = await db.findAnyUserByEmail(email);
+    if (!user) return res.status(400).json({ error: "コードが正しくないか、有効期限が切れています。" });
+
+    const result = await db.verifyAuthCode(user.id, "password_reset", code);
+    if (!result.ok) {
+      const msg = result.reason === "too_many_attempts"
+        ? "試行回数が上限に達しました。最初からやり直してください。"
+        : "コードが正しくないか、有効期限が切れています。";
+      return res.status(400).json({ error: msg });
+    }
+    await db.updatePassword(user.id, password);
+    // 再設定を機にメール確認済みにもする（コードを受け取れた＝本人）
+    if (!user.email_verified) await db.markEmailVerified(user.id);
+    await db.audit(user.org_id, user, "password.reset", "パスワードを再設定", clientIp(req));
+    res.json({ ok: true });
+  })
+);
 
 /* ----------------------------- 静的ファイル ----------------------------- */
 // 製品DB・設定のHTMLは静的配信させず、後段のガード付きルートで扱う
